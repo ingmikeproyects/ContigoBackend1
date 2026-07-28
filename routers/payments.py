@@ -1,6 +1,9 @@
 import os
 import datetime
 import mercadopago
+import logging
+import hmac
+import hashlib
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from supabase import Client
@@ -10,16 +13,11 @@ from pydantic import BaseModel
 
 sdk = mercadopago.SDK(os.getenv("MP_ACCESS_TOKEN"))
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/payments", tags=["Payments"])
 
 PLANS = {
-    "basico": {
-        "name": "Gratuito",
-        "mp_plan_id": os.getenv("MP_PLAN_BASICO_ID"),
-        "amount": 0,  # MXN
-        "description": "App móvil + monitoreo de biomarcadores + "
-                       "módulo de actividades"
-    },
     "premium": {
             "name": "Premium",
             "mp_plan_id": os.getenv("MP_PLAN_PREMIUM_ID"),
@@ -107,6 +105,7 @@ async def create_subscription(
     result = sdk.preapproval().create(preapproval_data)
 
     if result["status"] not in (200, 201):
+        logger.error(f"Mercado Pago subscription creation failed: {result['response']}")
         raise HTTPException(
             status_code=400,
             detail=result["response"].get(
@@ -238,23 +237,56 @@ async def cancel_subscription(
     return {"message": "Suscripción cancelada exitosamente"}
 
 
+def validate_mp_signature(x_signature: str, x_request_id: str, data_id: str):
+    secret = os.getenv("MP_WEBHOOK_SECRET")
+    if not secret:
+        logger.error(
+            "MP_WEBHOOK_SECRET no está configurada. "
+            "Rechazando el webhook por seguridad."
+        )
+        return False
+
+    if not x_signature or not x_request_id or not data_id:
+        return False
+
+    try:
+        # x-signature format: ts=123,v1=abc
+        parts = dict(item.split('=') for item in x_signature.split(','))
+        ts = parts.get('ts')
+        v1_received = parts.get('v1')
+
+        if not ts or not v1_received:
+            return False
+
+        manifest = f"id:{data_id};request-id:{x_request_id};ts:{ts};"
+        hmac_obj = hmac.new(secret.encode('utf-8'), manifest.encode('utf-8'), hashlib.sha256)
+        v1_calculated = hmac_obj.hexdigest()
+
+        return hmac.compare_digest(v1_calculated, v1_received)
+    except Exception as e:
+        logger.error(f"Error validating MP signature: {e}")
+        return False
+
 @router.post("/webhook")
 async def mercadopago_webhook(
     request: Request,
     supabase: Client = Depends(get_supabase)
 ):
-    """
-    Webhook de Mercado Pago. Escucha eventos de tipo
-    'subscription_preapproval' (cambios de estado de la suscripción:
-    authorized, paused, cancelled) y 'subscription_authorized_payment'
-    (cada cobro recurrente individual).
+    # Validate signature
+    x_signature = request.headers.get("x-signature")
+    x_request_id = request.headers.get("x-request-id")
+    data_id = request.query_params.get("data.id")
 
-    Configura esta URL en tu panel de Mercado Pago:
-    https://tu-backend-publico.com/payments/webhook
-    """
+    # Also check body for data_id if not in query params
     body = await request.json()
+    if not data_id:
+        data_id = (body.get("data") or {}).get("id")
+
+    if not validate_mp_signature(x_signature, x_request_id, str(data_id)):
+        logger.warning(f"Unauthorized webhook attempt. Signature validation failed for ID {data_id}")
+        raise HTTPException(status_code=401, detail="Invalid signature")
+
     topic = request.query_params.get("type") or body.get("type")
-    data_id = (body.get("data") or {}).get("id")
 
     if not data_id:
         return {"status": "ignored"}

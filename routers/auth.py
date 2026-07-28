@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from supabase import Client
 from database import get_supabase
 from schemas.user import UserCreate, Token, UserResponse, LoginRequest, ResetPasswordRequest, ForgotPasswordRequest
@@ -10,9 +10,42 @@ import smtplib
 import os
 import random
 import string
+import logging
 from email.mime.text import MIMEText
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+def send_reset_email(email: str, name: str, token: str):
+    try:
+        smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com")
+        smtp_port = int(os.getenv("SMTP_PORT", "587"))
+        smtp_user = os.getenv("SMTP_USER")
+        smtp_password = os.getenv("SMTP_PASSWORD")
+
+        if not smtp_user or not smtp_password:
+            logger.warning("SMTP credentials missing in environment variables.")
+            return
+
+        msg = MIMEText(
+            f"Hola {name},\n\n"
+            f"Tu código de recuperación es: {token}\n\n"
+            f"Este código expira en 1 hora.\n"
+            f"Si no solicitaste este código ignora este mensaje."
+        )
+        msg['From'] = smtp_user
+        msg['To'] = email
+        msg["Subject"] = "Recupera tu acceso a Contigo"
+
+        logger.info(f"Attempting to send email to {email} via {smtp_host}")
+        with smtplib.SMTP(smtp_host, smtp_port) as server:
+            server.starttls()
+            server.login(smtp_user, smtp_password)
+            server.send_message(msg)
+        logger.info(f"Reset email sent successfully to {email}")
+    except Exception as e:
+        logger.error(f"CRITICAL ERROR sending email to {email}: {str(e)}", exc_info=True)
 
 @router.post("/register", response_model=Token)
 def register(user_data: UserCreate, supabase: Client = Depends(get_supabase)):
@@ -119,9 +152,14 @@ def refresh(refresh_token: str, supabase: Client = Depends(get_supabase)):
     return {"access_token": new_access_token, "token_type": "bearer"}
 
 @router.post("/forgot-password")
-def forgot_password(request: ForgotPasswordRequest, supabase: Client = Depends(get_supabase)):
+def forgot_password(
+    request: ForgotPasswordRequest,
+    background_tasks: BackgroundTasks,
+    supabase: Client = Depends(get_supabase)
+):
     response = supabase.table("users").select("*").eq("correo", request.correo).execute()
     if not response.data:
+        # Por seguridad, no revelamos si el correo existe
         return {"message": "Si el correo existe recibirás instrucciones"}
     
     user = response.data[0]
@@ -134,34 +172,7 @@ def forgot_password(request: ForgotPasswordRequest, supabase: Client = Depends(g
         "expires_at": expires_at
     }).execute()
     
-    try:
-        smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com")
-        smtp_port = int(os.getenv("SMTP_PORT", "587"))
-        smtp_user = os.getenv("SMTP_USER")
-        smtp_password = os.getenv("SMTP_PASSWORD")
-        
-        if not smtp_user or not smtp_password:
-            print("WARNING: SMTP credentials missing. Check environment variables.")
-            return {"message": "Si el correo existe recibirás instrucciones"}
-
-        msg = MIMEText(
-            f"Hola {user['nombre']},\n\n"
-            f"Tu código de recuperación es: {token}\n\n"
-            f"Este código expira en 1 hora.\n"
-            f"Si no solicitaste este código ignora este mensaje."
-        )
-        msg['From'] = smtp_user
-        msg['To'] = request.correo
-        msg["Subject"] = "Recupera tu acceso a Contigo"
-        
-        print(f"DEBUG: Attempting to send email to {request.correo} via {smtp_host}")
-        with smtplib.SMTP(smtp_host, smtp_port) as server:
-            server.starttls()
-            server.login(smtp_user, smtp_password)
-            server.send_message(msg)
-        print("DEBUG: Email sent successfully")
-    except Exception as e:
-        print(f"CRITICAL ERROR sending email: {e}")
+    background_tasks.add_task(send_reset_email, request.correo, user['nombre'], token)
             
     return {"message": "Si el correo existe recibirás instrucciones"}
 
