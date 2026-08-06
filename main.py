@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from routers import auth, users, biometrics, emotional_states, activities, alerts, vinculaciones, notas, calibration, payments
+from routers import auth, users, biometrics, emotional_states, activities, alerts, vinculaciones, notas, calibration, payments, risk
 from database import get_supabase
 
 app = FastAPI(title="Contigo API", version="1.0.0")
@@ -23,6 +23,7 @@ app.include_router(vinculaciones.router)
 app.include_router(notas.router)
 app.include_router(calibration.router)
 app.include_router(payments.router)
+app.include_router(risk.router)
 
 @app.get("/")
 async def root():

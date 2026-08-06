@@ -1,80 +1,109 @@
 """
 Script de entrenamiento del modelo Random Forest para Contigo.
-Usa los datasets WESAD, DREAMER y StudentLife como base de 
-entrenamiento para clasificar niveles de riesgo emocional.
+Entrenado con el dataset de referencia WESAD para clasificar
+niveles de riesgo (NORMAL vs SEVERE).
 """
 
 import os
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import classification_report
 import joblib
+from dotenv import load_dotenv
+from supabase import create_client
+
+# Cargar variables de entorno
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
+
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
 
 # ─── CONFIGURACIÓN ────────────────────────────────────────
 RANDOM_STATE = 42
 N_ESTIMATORS = 100
-TARGET_PRECISION = 0.78
-RISK_LEVELS = {0: "NORMAL", 1: "MILD", 2: "MODERATE", 3: "SEVERE"}
 
 # ─── FEATURES USADAS ──────────────────────────────────────
+# Solo usamos las que WESAD provee para el entrenamiento del modelo base
 FEATURE_COLUMNS = [
-    "heart_rate", "hrv", "spo2", "stress_level",
-    "sleep_hours", "activity_level",
-    "screen_unlocks", "app_usage_minutes"
+    "heart_rate", "hrv", "stress_level", "activity_level"
 ]
 
-def generate_synthetic_data(n_samples: int = 2000) -> pd.DataFrame:
-    """Genera datos sintéticos calibrados para los 4 niveles de riesgo."""
-    np.random.seed(RANDOM_STATE)
-    records = []
+def load_real_data_from_supabase() -> pd.DataFrame:
+    """Carga los datos de WESAD desde la tabla public_reference_dataset."""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        raise ValueError("SUPABASE_URL o SUPABASE_SERVICE_KEY no configurados.")
     
-    risk_profiles = {
-        0: { "hr": (72, 8), "hrv": (55, 12), "spo2": (98, 0.5), "stress": (2, 1), "sleep": (7.5, 0.8), "activity": (0.6, 0.2), "unlocks": (15, 5), "usage": (90, 30) },
-        1: { "hr": (82, 10), "hrv": (42, 10), "spo2": (97, 0.8), "stress": (4, 1.5), "sleep": (6.5, 1), "activity": (0.4, 0.2), "unlocks": (22, 7), "usage": (130, 40) },
-        2: { "hr": (92, 12), "hrv": (30, 8), "spo2": (96, 1), "stress": (6.5, 1.5), "sleep": (5.5, 1.2), "activity": (0.25, 0.15), "unlocks": (32, 10), "usage": (180, 50) },
-        3: { "hr": (105, 15), "hrv": (18, 6), "spo2": (95, 1.2), "stress": (8.5, 1), "sleep": (4.5, 1.5), "activity": (0.15, 0.1), "unlocks": (45, 15), "usage": (240, 60) }
-    }
+    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+    # Supabase tiene un límite de 1000 por defecto. Obtenemos los 5000 registros usando range.
+    all_data = []
+    batch_size = 1000
+    for i in range(0, 5001, batch_size):
+        response = supabase.table("public_reference_dataset")\
+            .select("*")\
+            .range(i, i + batch_size - 1)\
+            .execute()
+        if response.data:
+            all_data.extend(response.data)
+        else:
+            break
+
+    if not all_data:
+        raise ValueError("No se encontraron datos en public_reference_dataset. ¿Corriste load_wesad_dataset.py?")
     
-    samples_per_class = n_samples // 4
-    for risk_level, profile in risk_profiles.items():
-        for _ in range(samples_per_class):
-            records.append({
-                "heart_rate": max(50, np.random.normal(profile["hr"][0], profile["hr"][1])),
-                "hrv": max(5, np.random.normal(profile["hrv"][0], profile["hrv"][1])),
-                "spo2": min(100, max(90, np.random.normal(profile["spo2"][0], profile["spo2"][1]))),
-                "stress_level": min(10, max(0, np.random.normal(profile["stress"][0], profile["stress"][1]))),
-                "sleep_hours": min(12, max(2, np.random.normal(profile["sleep"][0], profile["sleep"][1]))),
-                "activity_level": min(1, max(0, np.random.normal(profile["activity"][0], profile["activity"][1]))),
-                "screen_unlocks": max(0, int(np.random.normal(profile["unlocks"][0], profile["unlocks"][1]))),
-                "app_usage_minutes": max(0, int(np.random.normal(profile["usage"][0], profile["usage"][1]))),
-                "risk_level": risk_level
-            })
-    
-    return pd.DataFrame(records)
+    df = pd.DataFrame(all_data)
+    print(f"Cargados {len(df)} registros de WESAD desde Supabase.")
+
+    # Mapeo de riesgo a numérico para sklearn
+    risk_map = {"NORMAL": 0, "SEVERE": 3}
+    df["risk_level_num"] = df["risk_level"].map(risk_map)
+
+    return df
 
 def train_model(df: pd.DataFrame):
     X = df[FEATURE_COLUMNS]
-    y = df["risk_level"]
+    y = df["risk_level_num"]
     
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
     
-    X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=RANDOM_STATE, stratify=y)
+    # Stratify asegura que ambas clases estén en el set de prueba
+    X_train, X_test, y_train, y_test = train_test_split(
+        X_scaled, y, test_size=0.2, random_state=RANDOM_STATE, stratify=y
+    )
     
-    model = RandomForestClassifier(n_estimators=N_ESTIMATORS, max_depth=10, random_state=RANDOM_STATE, class_weight="balanced")
+    model = RandomForestClassifier(
+        n_estimators=N_ESTIMATORS,
+        max_depth=10,
+        random_state=RANDOM_STATE,
+        class_weight="balanced"
+    )
     model.fit(X_train, y_train)
     
-    print(f"Precisión en prueba: {model.score(X_test, y_test):.3f}")
+    y_pred = model.predict(X_test)
+    print("\n--- MÉTRICAS REALES (WESAD) ---")
+
+    # Aseguramos que target_names coincida con las clases presentes
+    unique_classes = sorted(y_test.unique())
+    target_names = ["NORMAL", "SEVERE"]
+    if len(unique_classes) == 1:
+        target_names = [target_names[0]] if unique_classes[0] == 0 else [target_names[1]]
+
+    print(classification_report(y_test, y_pred, target_names=target_names))
+
     return model, scaler
 
 if __name__ == "__main__":
-    df = generate_synthetic_data(4000)
-    model, scaler = train_model(df)
-    
-    # Save model
-    os.makedirs("ml/models", exist_ok=True)
-    joblib.dump({"model": model, "scaler": scaler}, "ml/models/contigo_model.joblib")
-    print("✅ Modelo guardado como joblib. TODO: Convertir a TFLite para Android.")
+    try:
+        df = load_real_data_from_supabase()
+        model, scaler = train_model(df)
+
+        # Guardar modelo
+        os.makedirs("ml/models", exist_ok=True)
+        joblib.dump({"model": model, "scaler": scaler}, "ml/models/contigo_model.joblib")
+        print("✅ Modelo real guardado como joblib.")
+    except Exception as e:
+        print(f"❌ Error en entrenamiento: {e}")
