@@ -63,6 +63,9 @@ class ResetPasswordRequest(BaseModel):
 class ForgotPasswordRequest(BaseModel):
     correo: EmailStr
 
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
+
 class UserResponse(UserBase):
     id: int
     uid: str

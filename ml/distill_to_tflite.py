@@ -21,29 +21,38 @@ SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
 
 RANDOM_STATE = 42
 FEATURE_COLUMNS = [
-    "heart_rate", "hrv", "stress_level", "activity_level"
+    "heart_rate", "hrv", "stress_level",
+    "sleep_hours", "activity_level", "screen_unlocks", "app_usage_minutes"
 ]
 
-MODEL_PATH = os.path.join("ml", "models", "contigo_model.joblib")
-TFLITE_PATH = os.path.join("ml", "models", "contigo_model.tflite")
-SCALER_JSON_PATH = os.path.join("ml", "models", "scaler_params.json")
+# Rutas absolutas
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_PATH = os.path.join(SCRIPT_DIR, "models", "contigo_model.joblib")
+TFLITE_PATH = os.path.join(SCRIPT_DIR, "models", "contigo_model.tflite")
+SCALER_JSON_PATH = os.path.join(SCRIPT_DIR, "models", "scaler_params.json")
 
 def load_data_from_supabase() -> np.ndarray:
     """Carga los datos de WESAD desde Supabase para la destilación."""
     supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
     all_data = []
     batch_size = 1000
-    for i in range(0, 5001, batch_size):
+    current_offset = 0
+    while True:
         response = supabase.table("public_reference_dataset")\
             .select("*")\
-            .range(i, i + batch_size - 1)\
+            .eq("source_dataset", "TAG_MULTIMODAL_REAL")\
+            .range(current_offset, current_offset + batch_size - 1)\
             .execute()
-        if response.data:
-            all_data.extend(response.data)
-        else:
+        if not response.data:
+            break
+        all_data.extend(response.data)
+        current_offset += batch_size
+        if current_offset >= 20000: # 20k es suficiente para destilar el conocimiento
             break
 
     df = pd.DataFrame(all_data)
+    # Llenar nulos si los hay
+    df = df.fillna(0)
     return df[FEATURE_COLUMNS].values.astype(np.float32)
 
 def main():
@@ -68,7 +77,7 @@ def main():
     student = tf.keras.Sequential([
         tf.keras.layers.Input(shape=(len(FEATURE_COLUMNS),)),
         tf.keras.layers.Dense(16, activation='relu'),
-        tf.keras.layers.Dense(2, activation='softmax'), # 2 clases: NORMAL y SEVERE
+        tf.keras.layers.Dense(len(rf_model.classes_), activation='softmax'), # Dinámico según las clases del maestro
     ])
     student.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
 

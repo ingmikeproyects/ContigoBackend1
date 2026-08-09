@@ -1,21 +1,46 @@
+import logging
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 from supabase import Client
 from database import get_supabase
 from middleware.auth_middleware import get_current_user
 
 router = APIRouter(prefix="/gad7", tags=["GAD-7"])
+logger = logging.getLogger(__name__)
+
+
+class Gad7ResultCreate(BaseModel):
+    q1: int = Field(ge=0, le=3)
+    q2: int = Field(ge=0, le=3)
+    q3: int = Field(ge=0, le=3)
+    q4: int = Field(ge=0, le=3)
+    q5: int = Field(ge=0, le=3)
+    q6: int = Field(ge=0, le=3)
+    q7: int = Field(ge=0, le=3)
+    total_score: int = Field(ge=0, le=21)
+    severity_level: str = Field(min_length=1, max_length=50)
+    applied_at: datetime
 
 @router.post("")
 def save_gad7_result(
-    result: dict,
+    result: Gad7ResultCreate,
     current_user: dict = Depends(get_current_user),
     supabase: Client = Depends(get_supabase)
 ):
-    data = {**result, "user_id": current_user["id"]}
-    response = supabase.table("gad7_results").insert(data).execute()
-    if not response.data:
+    try:
+        data = {**result.model_dump(mode="json"), "user_id": current_user["id"]}
+        response = supabase.table("gad7_results").insert(data).execute()
+        if not response.data:
+            logger.error("GAD-7 insert returned no data for user_id=%s", current_user["id"])
+            raise HTTPException(status_code=500, detail="Error saving GAD-7 result")
+        return response.data[0]
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Failed to save GAD-7 for user_id=%s", current_user["id"])
         raise HTTPException(status_code=500, detail="Error saving GAD-7 result")
-    return response.data[0]
 
 @router.get("/me")
 def get_my_gad7_results(

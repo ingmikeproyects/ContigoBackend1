@@ -1,63 +1,86 @@
-"""
-Generador de métricas de precisión y recall para los modelos de Contigo.
-Versión simplificada sin dependencias pesadas para evitar errores de entorno.
-"""
+import os
+import joblib
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
+from sklearn.preprocessing import StandardScaler
+from dotenv import load_dotenv
+from supabase import create_client
 
-def save_report():
-    # Valores basados en los sets de validación reportados durante el entrenamiento
-    rf_report = {
-        "Minimo": {"precision": 0.85, "recall": 0.88, "f1-score": 0.86},
-        "Leve": {"precision": 0.78, "recall": 0.75, "f1-score": 0.76},
-        "Moderado": {"precision": 0.74, "recall": 0.72, "f1-score": 0.73},
-        "Severo": {"precision": 0.82, "recall": 0.84, "f1-score": 0.83},
-        "accuracy": 0.80
-    }
+# Configuración
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
 
-    beto_report = {
-        "Calma": {"precision": 0.92, "recall": 0.94, "f1-score": 0.93},
-        "Inquietud": {"precision": 0.84, "recall": 0.81, "f1-score": 0.82},
-        "Preocupacion": {"precision": 0.79, "recall": 0.77, "f1-score": 0.78},
-        "Panico": {"precision": 0.88, "recall": 0.90, "f1-score": 0.89},
-        "accuracy": 0.86
-    }
+FEATURE_COLUMNS = [
+    "heart_rate", "hrv", "stress_level",
+    "sleep_hours", "activity_level", "screen_unlocks", "app_usage_minutes"
+]
 
-    markdown = f"""# Reporte de Métricas de Inteligencia Artificial - Proyecto Contigo
+def generate_report():
+    print("📊 Generando Reporte de Métricas para la Tesis...")
 
-Este reporte detalla el desempeño de los modelos de aprendizaje automático utilizados para el monitoreo de bienestar emocional, conforme a las solicitudes de Calidad del Software.
+    # 1. Cargar el modelo
+    model_path = os.path.join(os.path.dirname(__file__), "models", "contigo_model.joblib")
+    if not os.path.exists(model_path):
+        print("❌ Error: No se encontró contigo_model.joblib")
+        return
 
-## 1. Modelo Random Forest (Biomarcadores Fisiológicos)
-*Finalidad: Clasificación de riesgo basada en ritmo cardíaco, HRV, sueño y actividad.*
+    bundle = joblib.load(model_path)
+    model = bundle["model"]
+    scaler = bundle["scaler"]
 
-| Nivel de Riesgo | Precision | Recall | F1-Score |
-|-----------------|-----------|--------|----------|
-| Mínimo          | {rf_report['Minimo']['precision']:.2f}      | {rf_report['Minimo']['recall']:.2f}   | {rf_report['Minimo']['f1-score']:.2f}    |
-| Leve            | {rf_report['Leve']['precision']:.2f}      | {rf_report['Leve']['recall']:.2f}   | {rf_report['Leve']['f1-score']:.2f}    |
-| Moderado        | {rf_report['Moderado']['precision']:.2f}      | {rf_report['Moderado']['recall']:.2f}   | {rf_report['Moderado']['f1-score']:.2f}    |
-| Severo          | {rf_report['Severo']['precision']:.2f}      | {rf_report['Severo']['recall']:.2f}   | {rf_report['Severo']['f1-score']:.2f}    |
+    # 2. Obtener datos de prueba desde Supabase (usamos un set de validación de 5000 registros)
+    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+    response = supabase.table("public_reference_dataset")\
+        .select("*")\
+        .eq("source_dataset", "TAG_MULTIMODAL_REAL")\
+        .limit(5000)\
+        .execute()
 
-**Precisión Global (Accuracy):** {rf_report['accuracy']:.2f}
+    df = pd.DataFrame(response.data)
+    risk_map = {"NORMAL": 0, "MODERATE": 1, "SEVERE": 3}
+    df["risk_level_num"] = df["risk_level"].map(risk_map)
+    df = df.dropna(subset=["risk_level_num"] + FEATURE_COLUMNS)
 
----
+    X = df[FEATURE_COLUMNS]
+    y_true = df["risk_level_num"]
+    X_scaled = scaler.transform(X)
 
-## 2. Modelo BETO (Procesamiento de Lenguaje Natural)
-*Finalidad: Análisis de indicadores lingüísticos en notas y reflexiones del usuario.*
+    # 3. Predicciones
+    y_pred = model.predict(X_scaled)
 
-| Estado Emocional | Precision | Recall | F1-Score |
-|------------------|-----------|--------|----------|
-| Calma            | {beto_report['Calma']['precision']:.2f}      | {beto_report['Calma']['recall']:.2f}   | {beto_report['Calma']['f1-score']:.2f}    |
-| Inquietud        | {beto_report['Inquietud']['precision']:.2f}      | {beto_report['Inquietud']['recall']:.2f}   | {beto_report['Inquietud']['f1-score']:.2f}    |
-| Preocupación     | {beto_report['Preocupacion']['precision']:.2f}      | {beto_report['Preocupacion']['recall']:.2f}   | {beto_report['Preocupacion']['f1-score']:.2f}    |
-| Pánico           | {beto_report['Panico']['precision']:.2f}      | {beto_report['Panico']['recall']:.2f}   | {beto_report['Panico']['f1-score']:.2f}    |
+    # 4. Generar Métricas
+    acc = accuracy_score(y_true, y_pred)
+    target_names = ["NORMAL", "MODERATE", "SEVERE"]
+    unique_y = sorted(y_true.unique())
+    present_names = [target_names[i] if i < len(target_names) else f"Clase_{i}" for i in range(len(unique_y))]
 
-**Precisión Global (Accuracy):** {beto_report['accuracy']:.2f}
+    report_dict = classification_report(y_true, y_pred, target_names=present_names, output_dict=True)
 
----
-*Reporte generado automáticamente el 22 de julio de 2026 para fines de validación académica.*
-"""
+    # 5. Guardar en un archivo Markdown legible (Usando UTF-8 para evitar errores de codec)
+    report_path = os.path.join(os.path.dirname(__file__), "REPORTE_METRICAS_TESIS.md")
+    with open(report_path, "w", encoding="utf-8") as f:
+        f.write("# 📝 Reporte de Desempeño del Modelo de IA (TAG Multimodal)\n\n")
+        f.write(f"**Precisión Global (Accuracy):** {acc:.4f}\n\n")
+        f.write("## 📈 Tabla de Métricas por Clase\n")
+        f.write("| Clase | Precision | Recall | F1-Score | Soporte |\n")
+        f.write("|-------|-----------|--------|----------|---------|\n")
+        for label, metrics in report_dict.items():
+            if label in ['accuracy', 'macro avg', 'weighted avg']: continue
+            f.write(f"| {label} | {metrics['precision']:.3f} | {metrics['recall']:.3f} | {metrics['f1-score']:.3f} | {metrics['support']} |\n")
 
-    with open("ml_report.md", "w", encoding="utf-8") as f:
-        f.write(markdown)
-    print("✅ Reporte ml_report.md generado con éxito.")
+        f.write("\n## 🧠 Importancia de las Características (Feature Importance)\n")
+        importances = model.feature_importances_
+        feat_imp = sorted(zip(FEATURE_COLUMNS, importances), key=lambda x: x[1], reverse=True)
+        f.write("| Característica | Importancia (%) |\n")
+        f.write("|----------------|-----------------|\n")
+        for feat, imp in feat_imp:
+            f.write(f"| {feat} | {imp*100:.2f}% |\n")
+
+    print(f"✅ Reporte generado en: {report_path}")
 
 if __name__ == "__main__":
-    save_report()
+    generate_report()

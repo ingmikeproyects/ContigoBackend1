@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from supabase import Client
 from database import get_supabase
-from schemas.user import UserCreate, Token, UserResponse, LoginRequest, ResetPasswordRequest, ForgotPasswordRequest
+from schemas.user import UserCreate, Token, UserResponse, LoginRequest, ResetPasswordRequest, ForgotPasswordRequest, RefreshTokenRequest
 from utils.password_handler import get_password_hash, verify_password
 from utils.jwt_handler import create_access_token, create_refresh_token, decode_token
 import uuid
@@ -203,8 +203,8 @@ def login(user_data: LoginRequest, supabase: Client = Depends(get_supabase)):
         raise HTTPException(status_code=500, detail=f"Server error: {str(e)}")
 
 @router.post("/refresh", response_model=dict)
-def refresh(refresh_token: str, supabase: Client = Depends(get_supabase)):
-    payload = decode_token(refresh_token)
+def refresh(request: RefreshTokenRequest, supabase: Client = Depends(get_supabase)):
+    payload = decode_token(request.refresh_token)
     if not payload:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
     
