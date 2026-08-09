@@ -18,7 +18,8 @@ def update_me(updates: dict, current_user: dict = Depends(get_current_user), sup
         "medicamentos": "lista_medicamentos",
         "institucion_licenciatura": "licenciatura_psicologia",
         "tipo_especialidad": "especialidad",
-        "institucion": "institucion_actual"
+        "institucion": "institucion_actual",
+        "genero": "sexo"
     }
 
     db_updates = {}

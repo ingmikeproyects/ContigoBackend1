@@ -63,6 +63,8 @@ async def create_subscription(
     el init_point al que la app debe redirigir al usuario para que
     autorice el cobro recurrente.
     """
+    if not os.getenv("MP_ACCESS_TOKEN"):
+        raise HTTPException(status_code=503, detail="El servicio de pagos aún no está configurado. Intenta más tarde.")
     plan = PLANS.get(body.plan_id)
     if not plan:
         raise HTTPException(status_code=400, detail="Plan no válido")

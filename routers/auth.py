@@ -12,7 +12,7 @@ import random
 import string
 import logging
 import re
-from email.mime.text import MIMEText
+from email.message import EmailMessage
 
 logger = logging.getLogger(__name__)
 
@@ -26,15 +26,15 @@ def send_reset_email(email: str, name: str, token: str):
         smtp_password = os.getenv("SMTP_PASSWORD")
 
         if not smtp_user or not smtp_password:
-            logger.error("CRITICAL: SMTP credentials missing in environment variables.")
-            return
+            raise RuntimeError("SMTP no está configurado (SMTP_USER/SMTP_PASSWORD)")
 
-        msg = MIMEText(
+        msg = EmailMessage()
+        msg.set_content(
             f"Hola {name},\n\n"
             f"Tu código de verificación para Contigo es: {token}\n\n"
             f"Este código es válido por 1 hora.\n"
             f"Si no solicitaste este código, puedes ignorar este mensaje con seguridad."
-        )
+        , charset="utf-8")
         msg['From'] = f"Contigo App <{smtp_user}>"
         msg['To'] = email
         msg["Subject"] = "Código de Verificación - Contigo"
@@ -53,8 +53,10 @@ def send_reset_email(email: str, name: str, token: str):
     except smtplib.SMTPAuthenticationError:
         logger.error(f"AUTH ERROR: Google rejected credentials for {smtp_user}. "
                      "Make sure you are using an 'App Password' and not your regular password.")
+        raise
     except Exception as e:
         logger.error(f"SMTP FAILURE to {email}: {type(e).__name__} - {str(e)}", exc_info=True)
+        raise
 
 @router.post("/register", response_model=Token)
 def register(
@@ -223,7 +225,8 @@ def forgot_password(
     background_tasks: BackgroundTasks,
     supabase: Client = Depends(get_supabase)
 ):
-    response = supabase.table("users").select("*").eq("correo", request.correo).execute()
+    email = request.correo.strip().lower()
+    response = supabase.table("users").select("*").ilike("correo", email).execute()
     if not response.data:
         # Por seguridad, no revelamos si el correo existe
         return {"message": "Si el correo existe recibirás instrucciones"}
@@ -238,7 +241,9 @@ def forgot_password(
         "expires_at": expires_at
     }).execute()
     
-    background_tasks.add_task(send_reset_email, request.correo, user['nombre'], token)
+    # Do not return a false success if SMTP is unavailable.  The SMTP timeout
+    # is bounded, so this gives the patient a real, actionable result.
+    send_reset_email(email, user['nombre'], token)
             
     return {"message": "Si el correo existe recibirás instrucciones"}
 
