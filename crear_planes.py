@@ -34,7 +34,7 @@ HEADERS = {
 
 BACK_URL = os.getenv(
     "MP_BACK_URL",
-    "https://your-api-url.railway.app/payments/return"
+    "https://contigobackend1-production.up.railway.app/payments/return"
 )
 
 print(f"[DEBUG] MP_BACK_URL leido: '{BACK_URL}'")
