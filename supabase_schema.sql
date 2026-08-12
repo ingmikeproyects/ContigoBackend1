@@ -51,7 +51,12 @@ CREATE TABLE vinculaciones (
     especialista_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
     fecha_vinculacion TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     activa BOOLEAN DEFAULT TRUE,
-    consentimiento_dado BOOLEAN DEFAULT FALSE
+    consentimiento_dado BOOLEAN DEFAULT FALSE,
+    codigo VARCHAR(6) UNIQUE,
+    estado VARCHAR(20) DEFAULT 'aceptada' CHECK (estado IN (
+        'pendiente', 'aceptada', 'expirada', 'finalizada'
+    )),
+    expires_at TIMESTAMP WITH TIME ZONE
 );
 
 -- Tabla de lecturas biométricas
@@ -103,7 +108,21 @@ CREATE TABLE notas_especialista (
     especialista_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
     paciente_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
     texto TEXT NOT NULL,
+    visible_para_paciente BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Tareas terapéuticas asignadas por el especialista
+CREATE TABLE specialist_tasks (
+    id SERIAL PRIMARY KEY,
+    especialista_id INTEGER REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+    paciente_id INTEGER REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+    titulo VARCHAR(160) NOT NULL,
+    descripcion TEXT,
+    minutos_estimados INTEGER DEFAULT 15 CHECK (minutos_estimados BETWEEN 1 AND 180),
+    completada BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    completed_at TIMESTAMP WITH TIME ZONE
 );
 
 -- Tabla de calibración
@@ -161,6 +180,7 @@ ALTER TABLE emotional_states ENABLE ROW LEVEL SECURITY;
 ALTER TABLE activity_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE alerts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE notas_especialista ENABLE ROW LEVEL SECURITY;
+ALTER TABLE specialist_tasks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE calibration_data ENABLE ROW LEVEL SECURITY;
 ALTER TABLE gad7_results ENABLE ROW LEVEL SECURITY;
 ALTER TABLE password_reset_tokens ENABLE ROW LEVEL SECURITY;

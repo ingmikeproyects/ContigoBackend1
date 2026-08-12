@@ -12,6 +12,7 @@ import random
 import string
 import logging
 import re
+import httpx
 from email.message import EmailMessage
 
 logger = logging.getLogger(__name__)
@@ -20,6 +21,36 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 def send_reset_email(email: str, name: str, token: str):
     try:
+        body = (
+            f"Hola {name},\n\n"
+            f"Tu código de verificación para Contigo es: {token}\n\n"
+            f"Este código es válido por 1 hora.\n"
+            f"Si no solicitaste este código, puedes ignorar este mensaje con seguridad."
+        )
+        resend_api_key = os.getenv("RESEND_API_KEY")
+        if resend_api_key:
+            resend_from = os.getenv("RESEND_FROM")
+            if not resend_from:
+                raise RuntimeError("RESEND_FROM es obligatorio cuando RESEND_API_KEY está configurado")
+
+            response = httpx.post(
+                "https://api.resend.com/emails",
+                headers={
+                    "Authorization": f"Bearer {resend_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "from": resend_from,
+                    "to": [email],
+                    "subject": "Código de verificación - Contigo",
+                    "text": body,
+                },
+                timeout=15.0,
+            )
+            response.raise_for_status()
+            logger.info("SUCCESS: Reset email sent through Resend to %s", email)
+            return
+
         smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com")
         smtp_port = int(os.getenv("SMTP_PORT", "587"))
         smtp_user = os.getenv("SMTP_USER")
@@ -29,12 +60,7 @@ def send_reset_email(email: str, name: str, token: str):
             raise RuntimeError("SMTP no está configurado (SMTP_USER/SMTP_PASSWORD)")
 
         msg = EmailMessage()
-        msg.set_content(
-            f"Hola {name},\n\n"
-            f"Tu código de verificación para Contigo es: {token}\n\n"
-            f"Este código es válido por 1 hora.\n"
-            f"Si no solicitaste este código, puedes ignorar este mensaje con seguridad."
-        , charset="utf-8")
+        msg.set_content(body, charset="utf-8")
         msg['From'] = f"Contigo App <{smtp_user}>"
         msg['To'] = email
         msg["Subject"] = "Código de Verificación - Contigo"
@@ -222,7 +248,6 @@ def refresh(request: RefreshTokenRequest, supabase: Client = Depends(get_supabas
 @router.post("/forgot-password")
 def forgot_password(
     request: ForgotPasswordRequest,
-    background_tasks: BackgroundTasks,
     supabase: Client = Depends(get_supabase)
 ):
     email = request.correo.strip().lower()
@@ -249,10 +274,20 @@ def forgot_password(
         logger.exception("Could not persist password reset token for user_id=%s", user["id"])
         return {"message": "Si el correo existe recibirás instrucciones"}
 
-    # La respuesta sigue siendo genérica para no filtrar cuentas; los errores
-    # SMTP quedan con stack trace en Railway mediante send_reset_email.
-    background_tasks.add_task(send_reset_email, email, user['nombre'], token)
-            
+    # El envío es síncrono para que la app no avance a capturar el código si el
+    # proveedor rechazó el correo por configuración, autenticación o red.
+    try:
+        send_reset_email(email, user['nombre'], token)
+    except Exception:
+        supabase.table("password_reset_tokens")\
+            .update({"used": True})\
+            .eq("id", token_response.data[0]["id"])\
+            .execute()
+        raise HTTPException(
+            status_code=503,
+            detail="No fue posible enviar el código. Intenta nuevamente."
+        )
+
     return {"message": "Si el correo existe recibirás instrucciones"}
 
 @router.post("/reset-password")

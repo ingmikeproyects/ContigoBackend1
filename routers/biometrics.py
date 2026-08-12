@@ -40,13 +40,18 @@ def get_patient_stats(
     if current_user["rol"] == "especialista":
         # Verificar vinculación
         vinculacion = supabase.table("vinculaciones")\
-            .select("id")\
+            .select("id, consentimiento_dado")\
             .eq("paciente_id", patient_id)\
             .eq("especialista_id", current_user["id"])\
             .eq("activa", True)\
             .execute()
         if not vinculacion.data:
             raise HTTPException(status_code=403, detail="Paciente no vinculado")
+        if not vinculacion.data[0].get("consentimiento_dado", False):
+            raise HTTPException(
+                status_code=403,
+                detail="El paciente pausó el acceso a su historial"
+            )
 
     # Obtener lecturas
     from datetime import datetime, timedelta

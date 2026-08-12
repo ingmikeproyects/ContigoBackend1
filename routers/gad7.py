@@ -70,6 +70,22 @@ def get_patient_gad7(
 ):
     if current_user["rol"] not in ["especialista", "administrador"]:
         raise HTTPException(status_code=403, detail="Sin permisos")
+
+    if current_user["rol"] == "especialista":
+        link = supabase.table("vinculaciones")\
+            .select("id, consentimiento_dado")\
+            .eq("paciente_id", patient_id)\
+            .eq("especialista_id", current_user["id"])\
+            .eq("activa", True)\
+            .limit(1)\
+            .execute()
+        if not link.data:
+            raise HTTPException(status_code=403, detail="Paciente no vinculado")
+        if not link.data[0].get("consentimiento_dado", False):
+            raise HTTPException(
+                status_code=403,
+                detail="El paciente pausó el acceso a su historial"
+            )
     
     response = supabase.table("gad7_results")\
         .select("*")\
