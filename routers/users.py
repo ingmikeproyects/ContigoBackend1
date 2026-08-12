@@ -171,21 +171,13 @@ def delete_user(
     if current_user["rol"] != "administrador":
         raise HTTPException(status_code=403, detail="Only admins can delete users")
 
-    # Obtener el UID antes de borrar el registro de la tabla users
-    user_to_delete = supabase.table("users").select("uid").eq("id", userId).execute()
+    # La autenticación de Contigo es propia; Supabase Auth no es una segunda
+    # fuente de verdad (decisión arquitectónica Opción B).
+    user_to_delete = supabase.table("users").select("id").eq("id", userId).execute()
     if not user_to_delete.data:
         raise HTTPException(status_code=404, detail="User not found")
 
-    uid = user_to_delete.data[0]["uid"]
-
-    # 1. Borrar de la tabla users (dispara cascada en DB)
+    # Borrar de la tabla users dispara las cascadas definidas en DB.
     supabase.table("users").delete().eq("id", userId).execute()
-
-    # 2. Intentar borrar de Supabase Auth (requiere Service Role Key)
-    try:
-        supabase.auth.admin.delete_user(uid)
-    except Exception as e:
-        # Si falla el borrado en Auth, al menos ya se borró de la DB de la app
-        print(f"Warning: Could not delete user {uid} from Supabase Auth: {e}")
 
     return {"message": "Usuario eliminado correctamente"}

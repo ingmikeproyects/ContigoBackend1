@@ -3,6 +3,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+from pydantic import model_validator
 from supabase import Client
 from database import get_supabase
 from middleware.auth_middleware import get_current_user
@@ -22,6 +23,13 @@ class Gad7ResultCreate(BaseModel):
     total_score: int = Field(ge=0, le=21)
     severity_level: str = Field(min_length=1, max_length=50)
     applied_at: datetime
+
+    @model_validator(mode="after")
+    def score_matches_answers(self):
+        expected = sum((self.q1, self.q2, self.q3, self.q4, self.q5, self.q6, self.q7))
+        if self.total_score != expected:
+            raise ValueError("total_score must equal the sum of q1..q7")
+        return self
 
 @router.post("")
 def save_gad7_result(

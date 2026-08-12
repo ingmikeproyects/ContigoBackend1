@@ -4,7 +4,6 @@ import mercadopago
 import logging
 import hmac
 import hashlib
-import urllib.parse
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from supabase import Client
@@ -19,16 +18,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/payments", tags=["Payments"])
 
 def get_plan_id_from_env():
-    """Extrae el ID del plan de la URL configurada en el .env."""
-    back_url = os.getenv("MP_BACK_URL", "")
-    if "preapproval_plan_id=" in back_url:
-        try:
-            parsed = urllib.parse.urlparse(back_url)
-            query_params = urllib.parse.parse_qs(parsed.query)
-            return query_params.get("preapproval_plan_id", [None])[0]
-        except Exception:
-            pass
-    return "cce2f641fb2b4519bf35b8f8d2fe2521"
+    """Única fuente de verdad del recurso de suscripción de MercadoPago."""
+    return os.getenv("MP_PLAN_PREMIUM_ID")
 
 PLANS = {
     "premium": {
@@ -70,11 +61,14 @@ async def create_subscription(
     if not plan:
         raise HTTPException(status_code=400, detail="Plan no válido")
 
-    # Usamos la URL que ya configuraste en el .env que contiene el preapproval_plan_id
-    init_point = os.getenv("MP_BACK_URL")
-
-    if not init_point:
-        raise HTTPException(status_code=500, detail="URL de cobro no configurada")
+    mp_plan_id = plan["mp_plan_id"]
+    if not mp_plan_id:
+        logger.error("MP_PLAN_PREMIUM_ID is not configured")
+        raise HTTPException(status_code=503, detail="Plan Premium no configurado")
+    init_point = (
+        "https://www.mercadopago.com.mx/subscriptions/checkout"
+        f"?preapproval_plan_id={mp_plan_id}"
+    )
 
     # Registramos el intento en la base de datos
     # Como no estamos usando el SDK para crear, usaremos el mp_plan_id como referencia temporal
@@ -83,7 +77,7 @@ async def create_subscription(
         "plan_id": body.plan_id,
         "plan_name": plan["name"],
         "status": "pending",
-        "mp_preapproval_id": plan["mp_plan_id"],
+        "mp_preapproval_id": mp_plan_id,
         "amount": plan["amount"],
         "currency": "mxn",
         "start_date": datetime.datetime.utcnow().isoformat()
@@ -91,7 +85,7 @@ async def create_subscription(
 
     return {
         "init_point": init_point,
-        "preapproval_id": plan["mp_plan_id"]
+        "preapproval_id": mp_plan_id
     }
 
 @router.get("/return", response_class=HTMLResponse)

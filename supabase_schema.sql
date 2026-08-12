@@ -155,6 +155,7 @@ CREATE TABLE gad7_results (
 
 -- Habilitar Row Level Security
 ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE vinculaciones ENABLE ROW LEVEL SECURITY;
 ALTER TABLE biometric_readings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE emotional_states ENABLE ROW LEVEL SECURITY;
 ALTER TABLE activity_logs ENABLE ROW LEVEL SECURITY;
@@ -162,6 +163,7 @@ ALTER TABLE alerts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE notas_especialista ENABLE ROW LEVEL SECURITY;
 ALTER TABLE calibration_data ENABLE ROW LEVEL SECURITY;
 ALTER TABLE gad7_results ENABLE ROW LEVEL SECURITY;
+ALTER TABLE password_reset_tokens ENABLE ROW LEVEL SECURITY;
 
 CREATE TABLE IF NOT EXISTS subscriptions (
     id SERIAL PRIMARY KEY,
@@ -188,14 +190,6 @@ ALTER TABLE users DROP COLUMN IF EXISTS stripe_customer_id;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS
     subscription_plan VARCHAR(20);
 
-CREATE POLICY "Usuarios ven solo su propia suscripción"
-    ON subscriptions FOR SELECT
-    USING (auth.uid()::text = user_id::text);
-
-CREATE POLICY "Solo el backend (service role) puede insertar"
-    ON subscriptions FOR INSERT
-    WITH CHECK (auth.role() = 'service_role');
-
-CREATE POLICY "Solo el backend (service role) puede actualizar"
-    ON subscriptions FOR UPDATE
-    USING (auth.role() = 'service_role');
+-- No usar auth.uid(): Contigo emplea JWT propio, no Supabase Auth.
+-- Aplicar el diseño completo e idempotente de rls_option_b.sql. Mientras el
+-- backend use SUPABASE_SERVICE_KEY, la autorización efectiva vive en FastAPI.

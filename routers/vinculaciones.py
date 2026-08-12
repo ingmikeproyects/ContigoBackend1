@@ -1,9 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from supabase import Client
 from database import get_supabase
 from middleware.auth_middleware import get_current_user
 
 router = APIRouter(prefix="/vinculaciones", tags=["vinculaciones"])
+
+class ConsentUpdate(BaseModel):
+    consentimiento_dado: bool
 
 @router.get("/my-patients")
 def get_my_patients(current_user: dict = Depends(get_current_user), supabase: Client = Depends(get_supabase)):
@@ -137,9 +141,9 @@ def update_vinculacion(vinculacionId: int, data: dict, current_user: dict = Depe
     return response.data[0]
 
 @router.put("/consent")
-def update_consent(data: dict, current_user: dict = Depends(get_current_user), supabase: Client = Depends(get_supabase)):
+def update_consent(data: ConsentUpdate, current_user: dict = Depends(get_current_user), supabase: Client = Depends(get_supabase)):
     response = supabase.table("vinculaciones")\
-        .update({"consentimiento_dado": data["enabled"]})\
+        .update({"consentimiento_dado": data.consentimiento_dado})\
         .eq("paciente_id", current_user["id"])\
         .execute()
     return response.data

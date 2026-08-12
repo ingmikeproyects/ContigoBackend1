@@ -235,15 +235,23 @@ def forgot_password(
     token = ''.join(random.choices(string.digits, k=6))
     expires_at = (datetime.utcnow() + timedelta(hours=1)).isoformat()
     
-    supabase.table("password_reset_tokens").insert({
-        "user_id": user["id"],
-        "token": token,
-        "expires_at": expires_at
-    }).execute()
-    
-    # Do not return a false success if SMTP is unavailable.  The SMTP timeout
-    # is bounded, so this gives the patient a real, actionable result.
-    send_reset_email(email, user['nombre'], token)
+    try:
+        token_response = supabase.table("password_reset_tokens").insert({
+            "user_id": user["id"],
+            "token": token,
+            "expires_at": expires_at,
+            "used": False
+        }).execute()
+        if not token_response.data:
+            logger.error("Password reset insert returned no data for user_id=%s", user["id"])
+            return {"message": "Si el correo existe recibirás instrucciones"}
+    except Exception:
+        logger.exception("Could not persist password reset token for user_id=%s", user["id"])
+        return {"message": "Si el correo existe recibirás instrucciones"}
+
+    # La respuesta sigue siendo genérica para no filtrar cuentas; los errores
+    # SMTP quedan con stack trace en Railway mediante send_reset_email.
+    background_tasks.add_task(send_reset_email, email, user['nombre'], token)
             
     return {"message": "Si el correo existe recibirás instrucciones"}
 
