@@ -135,7 +135,17 @@ def create_invitation(
         .execute()
     )
 
-    code = f"{secrets.randbelow(1_000_000):06d}"
+    code = None
+    for _ in range(5):  # Reintento en caso de colisión
+        potential_code = f"{secrets.randbelow(1_000_000):06d}"
+        exists = supabase.table("vinculaciones").select("id").eq("codigo", potential_code).eq("activa", True).execute()
+        if not exists.data:
+            code = potential_code
+            break
+
+    if not code:
+        raise HTTPException(status_code=500, detail="No se pudo generar un código único. Intenta más tarde.")
+
     now = datetime.now(timezone.utc)
     invitation = {
         "especialista_id": current_user["id"],

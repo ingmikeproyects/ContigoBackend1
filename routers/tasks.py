@@ -15,11 +15,15 @@ class TaskCreate(BaseModel):
     paciente_id: int
     titulo: str = Field(min_length=1, max_length=160)
     descripcion: str | None = Field(default=None, max_length=1000)
+    instrucciones_html: str | None = Field(default=None)
+    enlace_recurso: str | None = Field(default=None)
+    fecha_vencimiento: datetime | None = Field(default=None)
     minutos_estimados: int = Field(default=15, ge=1, le=180)
 
 
 class TaskCompletion(BaseModel):
     completada: bool
+    adjunto_url: str | None = None
 
 
 def require_link(patient_id: int, specialist_id: int, supabase: Client):
@@ -52,6 +56,9 @@ def create_task(
                 "paciente_id": data.paciente_id,
                 "titulo": data.titulo.strip(),
                 "descripcion": data.descripcion.strip() if data.descripcion else None,
+                "instrucciones_html": data.instrucciones_html,
+                "enlace_recurso": data.enlace_recurso,
+                "fecha_vencimiento": data.fecha_vencimiento.isoformat() if data.fecha_vencimiento else None,
                 "minutos_estimados": data.minutos_estimados,
             }
         )
@@ -111,16 +118,18 @@ def complete_task(
 ):
     if current_user["rol"] != "paciente":
         raise HTTPException(status_code=403, detail="Solo pacientes")
+    update_data = {
+        "completada": data.completada,
+        "completed_at": datetime.now(timezone.utc).isoformat()
+        if data.completada
+        else None,
+        "adjunto_url": data.adjunto_url if data.completada else None,
+        "estado_entrega": "entregada" if data.completada else "pendiente"
+    }
+
     response = (
         supabase.table("specialist_tasks")
-        .update(
-            {
-                "completada": data.completada,
-                "completed_at": datetime.now(timezone.utc).isoformat()
-                if data.completada
-                else None,
-            }
-        )
+        .update(update_data)
         .eq("id", task_id)
         .eq("paciente_id", current_user["id"])
         .execute()

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from supabase import Client
 from database import get_supabase
 from middleware.auth_middleware import get_current_user
@@ -75,4 +75,28 @@ def get_patient_alerts(patient_id: int, current_user: dict = Depends(get_current
         .eq("user_id", patient_id)\
         .order("generated_at", desc=True)\
         .execute()
+    return response.data
+
+@router.get("/specialist")
+def get_specialist_alerts(current_user: dict = Depends(get_current_user), supabase: Client = Depends(get_supabase)):
+    if current_user["rol"] != "especialista":
+        raise HTTPException(status_code=403, detail="Solo especialistas")
+
+    # Obtener IDs de pacientes vinculados
+    links = supabase.table("vinculaciones")\
+        .select("paciente_id")\
+        .eq("especialista_id", current_user["id"])\
+        .eq("activa", True)\
+        .execute()
+
+    patient_ids = [link["paciente_id"] for link in (links.data or [])]
+    if not patient_ids:
+        return []
+
+    response = supabase.table("alerts")\
+        .select("*")\
+        .in_("user_id", patient_ids)\
+        .order("generated_at", desc=True)\
+        .execute()
+
     return response.data

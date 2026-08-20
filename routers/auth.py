@@ -67,7 +67,9 @@ def send_reset_email(email: str, name: str, token: str):
 
         logger.info(f"Connecting to SMTP server {smtp_host}:{smtp_port}...")
         server = smtplib.SMTP(smtp_host, smtp_port, timeout=15)
+        server.ehlo()  # Identificarse ante el servidor
         server.starttls()
+        server.ehlo()  # Re-identificarse tras cifrar
 
         logger.info(f"Logging in as {smtp_user}...")
         server.login(smtp_user, smtp_password)
@@ -94,9 +96,13 @@ def register(
 ):
     # 1. Validaciones de Seguridad y Negocio
 
-    # Validar Edad (Mínimo 18 años)
-    if user_data.edad and user_data.edad < 18:
-        raise HTTPException(status_code=400, detail="Debes ser mayor de 18 años para registrarte.")
+    # Validar Edad
+    if user_data.rol == "paciente":
+        if user_data.edad and (user_data.edad < 18 or user_data.edad > 22):
+            raise HTTPException(status_code=400, detail="La edad del paciente debe estar entre 18 y 22 años.")
+    elif user_data.rol == "especialista":
+        if user_data.edad and (user_data.edad < 28 or user_data.edad > 100):
+            raise HTTPException(status_code=400, detail="La edad del especialista debe estar entre 28 y 100 años.")
 
     # Validar Formato de Cédula (si es especialista)
     if user_data.rol == "especialista":
