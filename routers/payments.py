@@ -25,7 +25,7 @@ PLANS = {
     "premium": {
             "name": "Premium",
             "mp_plan_id": get_plan_id_from_env(),
-            "amount": 10,
+            "amount": 349,
             "description": "Acceso Premium Contigo"
         }
 }

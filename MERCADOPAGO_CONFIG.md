@@ -12,4 +12,4 @@ evitar confusión. El backend construye el checkout de suscripción a partir del
 hardcodeado.
 
 Antes de la demo, consultar el recurso `preapproval_plan/{id}` con el access
-token y confirmar `status=active`, moneda MXN, frecuencia mensual y monto 10.
+token y confirmar `status=active`, moneda MXN, frecuencia mensual y monto 349.
