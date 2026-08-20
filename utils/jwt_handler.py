@@ -3,13 +3,15 @@ import jwt
 from datetime import datetime, timedelta
 from typing import Optional
 from dotenv import load_dotenv
+from pathlib import Path
 
 
 # Forzar la carga del archivo .env buscando en el directorio raíz del backend
-current_dir = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.dirname(current_dir)
-dotenv_path = os.path.join(parent_dir, ".env")
-load_dotenv(dotenv_path=dotenv_path, override=True)
+backend_dir = Path(__file__).resolve().parent.parent
+dotenv_path = backend_dir / ".env"
+for candidate in (dotenv_path, backend_dir.parent / ".env"):
+    if candidate.exists():
+        load_dotenv(dotenv_path=candidate, override=False)
 
 SECRET_KEY = os.getenv("SECRET_KEY")
 

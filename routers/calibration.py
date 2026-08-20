@@ -1,9 +1,31 @@
-from fastapi import APIRouter, Depends
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from supabase import Client
 from database import get_supabase
 from middleware.auth_middleware import get_current_user
+from schemas.calibration import ExtendedCalibrationCreate
 
 router = APIRouter(prefix="/calibration", tags=["calibration"])
+
+
+@router.post("/extended", status_code=status.HTTP_204_NO_CONTENT)
+def save_extended_calibration(
+    data: ExtendedCalibrationCreate,
+    current_user: dict = Depends(get_current_user),
+    supabase: Client = Depends(get_supabase),
+):
+    if current_user.get("rol") != "paciente":
+        raise HTTPException(status_code=403, detail="Solo los pacientes pueden guardar esta calibración")
+
+    item = data.model_dump(mode="json", exclude={"applied_at"})
+    item.update({
+        "user_id": current_user["id"],
+        "applied_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    })
+    supabase.table("calibration_extended").upsert(item, on_conflict="user_id").execute()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 @router.get("/status")
 def get_calibration_status(current_user: dict = Depends(get_current_user), supabase: Client = Depends(get_supabase)):

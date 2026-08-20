@@ -10,12 +10,19 @@ router = APIRouter(prefix="/alerts", tags=["alerts"])
 def create_alert(data: AlertCreate, current_user: dict = Depends(get_current_user), supabase: Client = Depends(get_supabase)):
     alert = {
         "user_id": current_user["id"],
-        "risk_level": data.risk_level
+        "risk_level": data.risk_level.value if hasattr(data.risk_level, "value") else str(data.risk_level),
+        "trigger_summary": data.trigger_summary,
+        "heart_rate": data.heart_rate,
+        "hrv": data.hrv,
+        "spo2": data.spo2,
+        "stress_level": data.stress_level,
+        "source": data.source,
     }
+    alert = {key: value for key, value in alert.items() if value is not None}
     response = supabase.table("alerts").insert(alert).execute()
 
     # Notificación en caso de riesgo SEVERE
-    if data.risk_level == "SEVERE":
+    if alert["risk_level"] == "SEVERE":
         try:
             # Buscar especialista vinculado
             vinculacion = supabase.table("vinculaciones")\
@@ -99,4 +106,12 @@ def get_specialist_alerts(current_user: dict = Depends(get_current_user), supaba
         .order("generated_at", desc=True)\
         .execute()
 
-    return response.data
+    alerts = response.data or []
+    patients = supabase.table("users")\
+        .select("id,nombre")\
+        .in_("id", patient_ids)\
+        .execute()
+    names = {row["id"]: row["nombre"] for row in (patients.data or [])}
+    for alert in alerts:
+        alert["patient_name"] = names.get(alert["user_id"], f"Paciente {alert['user_id']}")
+    return alerts

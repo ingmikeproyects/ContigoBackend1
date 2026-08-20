@@ -14,6 +14,8 @@ class LoginRequest(BaseModel):
 
 class UserCreate(UserBase):
     password: str
+    privacy_accepted: bool = False
+    privacy_version: Optional[str] = Field(default=None, max_length=30)
     edad: Optional[int] = None
     sexo: Optional[str] = None
     emergencia_nombre: Optional[str] = None
@@ -57,8 +59,9 @@ class UserUpdate(BaseModel):
     historial_medico: Optional[str] = None
 
 class ResetPasswordRequest(BaseModel):
-    token: str
-    new_password: str
+    correo: EmailStr
+    token: str = Field(min_length=6, max_length=6, pattern=r"^\d{6}$")
+    new_password: str = Field(min_length=8, max_length=128)
 
 class ForgotPasswordRequest(BaseModel):
     correo: EmailStr

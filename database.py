@@ -1,10 +1,14 @@
 import os
+from pathlib import Path
 from supabase import create_client, Client
 from dotenv import load_dotenv
 
-# Solo cargamos el .env si estamos en local
-if os.path.exists(".env"):
-    load_dotenv()
+# En local admite ejecutar uvicorn desde la carpeta del backend o desde la
+# raíz del proyecto. En producción nunca sobrescribe las variables del host.
+backend_dir = Path(__file__).resolve().parent
+for candidate in (backend_dir / ".env", backend_dir.parent / ".env"):
+    if candidate.exists():
+        load_dotenv(candidate, override=False)
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY")

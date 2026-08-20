@@ -96,6 +96,12 @@ def register(
 ):
     # 1. Validaciones de Seguridad y Negocio
 
+    if user_data.rol == "paciente" and not user_data.privacy_accepted:
+        raise HTTPException(
+            status_code=400,
+            detail="Debes leer y aceptar el aviso de privacidad y los términos para registrarte.",
+        )
+
     # Validar Edad
     if user_data.rol == "paciente":
         if user_data.edad and (user_data.edad < 18 or user_data.edad > 22):
@@ -169,6 +175,9 @@ def register(
         "historial_medico": user_data.historial_medico,
         "activo": True
     }
+    if user_data.rol == "paciente":
+        new_user["privacy_accepted_at"] = datetime.utcnow().isoformat()
+        new_user["privacy_version"] = user_data.privacy_version or "2026-08-20"
     
     try:
         response = supabase.table("users").insert(new_user).execute()
@@ -263,7 +272,27 @@ def forgot_password(
         return {"message": "Si el correo existe recibirás instrucciones"}
     
     user = response.data[0]
-    token = ''.join(random.choices(string.digits, k=6))
+    # Invalida códigos anteriores de esta cuenta: sólo el último puede usarse.
+    supabase.table("password_reset_tokens")\
+        .update({"used": True})\
+        .eq("user_id", user["id"])\
+        .eq("used", False)\
+        .execute()
+
+    token = None
+    for _ in range(10):
+        candidate = ''.join(random.choices(string.digits, k=6))
+        duplicate = supabase.table("password_reset_tokens")\
+            .select("id")\
+            .eq("token", candidate)\
+            .eq("used", False)\
+            .limit(1)\
+            .execute()
+        if not duplicate.data:
+            token = candidate
+            break
+    if token is None:
+        raise HTTPException(status_code=503, detail="No fue posible generar un código único. Intenta nuevamente.")
     expires_at = (datetime.utcnow() + timedelta(hours=1)).isoformat()
     
     try:
@@ -299,8 +328,17 @@ def forgot_password(
 @router.post("/reset-password")
 def reset_password(request: ResetPasswordRequest, supabase: Client = Depends(get_supabase)):
     now = datetime.utcnow().isoformat()
+    user_response = supabase.table("users")\
+        .select("id")\
+        .ilike("correo", request.correo.strip().lower())\
+        .limit(1)\
+        .execute()
+    if not user_response.data:
+        raise HTTPException(status_code=400, detail="Código inválido o expirado")
+
     response = supabase.table("password_reset_tokens")\
         .select("*")\
+        .eq("user_id", user_response.data[0]["id"])\
         .eq("token", request.token)\
         .eq("used", False)\
         .gt("expires_at", now)\
