@@ -9,6 +9,7 @@ class BiometricBase(BaseModel):
     stress_level: Optional[float] = None
     sleep_hours: Optional[float] = None
     activity_level: Optional[float] = None
+    steps: Optional[int] = None
     screen_unlocks: Optional[int] = None
     app_usage_minutes: Optional[int] = None
 

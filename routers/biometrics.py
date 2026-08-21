@@ -58,7 +58,7 @@ def get_patient_stats(
     start_date = (datetime.utcnow() - timedelta(days=range_days)).isoformat()
 
     response = supabase.table("biometric_readings")\
-        .select("heart_rate, hrv, stress_level, activity_level, timestamp")\
+        .select("heart_rate, hrv, stress_level, activity_level, steps, timestamp")\
         .eq("user_id", patient_id)\
         .gte("timestamp", start_date)\
         .order("timestamp", desc=False)\
@@ -71,5 +71,6 @@ def get_patient_stats(
         "heart_rate": [d["heart_rate"] for d in data],
         "hrv": [d["hrv"] for d in data],
         "stress": [d["stress_level"] for d in data],
-        "activity": [d["activity_level"] for d in data]
+        "activity": [d["activity_level"] for d in data],
+        "steps": [d.get("steps") for d in data]
     }

@@ -69,6 +69,7 @@ CREATE TABLE biometric_readings (
     stress_level FLOAT,
     sleep_hours FLOAT,
     activity_level FLOAT,
+    steps INTEGER,
     screen_unlocks INTEGER,
     app_usage_minutes INTEGER,
     timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW()

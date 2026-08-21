@@ -10,7 +10,19 @@ FastAPI escuchando el puerto que Railway asigna y comprueba `/health`.
 - `SUPABASE_URL`: URL HTTPS del proyecto Supabase.
 - `SUPABASE_SERVICE_KEY`: clave `service_role`, nunca la `anon`.
 
-## Correo: elegir un solo proveedor
+## Correo
+
+El backend usa el primer proveedor configurado en este orden: **Brevo**,
+**Resend** y, por último, SMTP.
+
+### Brevo, recomendado para este despliegue
+
+- `BREVO_API_KEY`: clave API que comienza normalmente con `xkeysib-`.
+- `BREVO_SENDER_EMAIL`: dirección que aparece como verificada en Brevo.
+- `BREVO_SENDER_NAME=Contigo`
+
+No publiques la clave ni la incluyas en el repositorio. Brevo se conecta por
+HTTPS, por lo que funciona aunque el plan de Railway bloquee SMTP saliente.
 
 ### Gmail SMTP
 
@@ -20,15 +32,15 @@ FastAPI escuchando el puerto que Railway asigna y comprueba `/health`.
 - `SMTP_PASSWORD`: contraseña de aplicación de 16 caracteres; no usar la
   contraseña normal de Google.
 
-Si se va a usar Gmail, elimina cualquier `RESEND_API_KEY` antiguo que tenga
-contenido. El backend da prioridad a Resend cuando esa variable existe.
+Para forzar SMTP deben estar vacías o eliminadas tanto `BREVO_API_KEY` como
+`RESEND_API_KEY`.
 
 ### Resend, recomendado si Railway no alcanza Gmail
 
 - `RESEND_API_KEY`: secreto generado en Resend.
 - `RESEND_FROM`: remitente de un dominio verificado.
 
-Si `RESEND_API_KEY` existe, el backend utiliza Resend e ignora SMTP.
+Resend se usa solamente cuando `BREVO_API_KEY` no está configurada.
 
 ## Mercado Pago
 
@@ -48,6 +60,6 @@ Después de cambiar variables hay que desplegar los cambios pendientes. Verifica
    `/calibration/extended` y `/auth/forgot-password`.
 3. Ejecutar `migration_feedback5_20260820.sql` en Supabase antes de probar.
 4. Solicitar un código con una cuenta real y revisar los logs del deployment
-   para `SUCCESS: Email sent successfully` o el error SMTP clasificado.
+   para `SUCCESS: Reset email sent through Brevo` o el error clasificado.
 5. Solicitar recuperación de contraseña y comprobar que el correo llega; el
    código vence en una hora y solo puede usarse una vez.

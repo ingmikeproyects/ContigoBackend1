@@ -28,9 +28,43 @@ def send_reset_email(email: str, name: str, token: str):
             f"Este código es válido por 1 hora.\n"
             f"Si no solicitaste este código, puedes ignorar este mensaje con seguridad."
         )
-        resend_api_key = os.getenv("RESEND_API_KEY")
+
+        # Railway bloquea SMTP saliente en algunos planes. Brevo y Resend usan
+        # HTTPS, por lo que son las opciones preferidas en producción.
+        brevo_api_key = os.getenv("BREVO_API_KEY", "").strip()
+        if brevo_api_key:
+            brevo_sender_email = os.getenv("BREVO_SENDER_EMAIL", "").strip()
+            brevo_sender_name = os.getenv("BREVO_SENDER_NAME", "Contigo").strip() or "Contigo"
+            if not brevo_sender_email:
+                raise RuntimeError(
+                    "BREVO_SENDER_EMAIL es obligatorio cuando BREVO_API_KEY está configurado"
+                )
+
+            response = httpx.post(
+                "https://api.brevo.com/v3/smtp/email",
+                headers={
+                    "api-key": brevo_api_key,
+                    "Accept": "application/json",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "sender": {
+                        "name": brevo_sender_name,
+                        "email": brevo_sender_email,
+                    },
+                    "to": [{"email": email, "name": name or email}],
+                    "subject": "Código de verificación - Contigo",
+                    "textContent": body,
+                },
+                timeout=15.0,
+            )
+            response.raise_for_status()
+            logger.info("SUCCESS: Reset email sent through Brevo to %s", email)
+            return
+
+        resend_api_key = os.getenv("RESEND_API_KEY", "").strip()
         if resend_api_key:
-            resend_from = os.getenv("RESEND_FROM")
+            resend_from = os.getenv("RESEND_FROM", "").strip()
             if not resend_from:
                 raise RuntimeError("RESEND_FROM es obligatorio cuando RESEND_API_KEY está configurado")
 
@@ -93,7 +127,7 @@ def send_reset_email(email: str, name: str, token: str):
                      "Make sure you are using an 'App Password' and not your regular password.")
         raise
     except Exception as e:
-        logger.error(f"SMTP FAILURE to {email}: {type(e).__name__} - {str(e)}", exc_info=True)
+        logger.error(f"EMAIL FAILURE to {email}: {type(e).__name__} - {str(e)}", exc_info=True)
         raise
 
 @router.post("/register", response_model=Token)
@@ -341,14 +375,30 @@ def forgot_password(
             status_code=503,
             detail="Railway no pudo conectarse al servidor de correo. Revisa los logs o usa Resend por HTTPS.",
         )
-    except httpx.HTTPStatusError:
+    except httpx.HTTPStatusError as exc:
         supabase.table("password_reset_tokens")\
             .update({"used": True})\
             .eq("id", token_response.data[0]["id"])\
             .execute()
+        provider = "Brevo" if "api.brevo.com" in str(exc.request.url) else "Resend"
+        logger.error(
+            "%s rejected reset email with HTTP %s",
+            provider,
+            exc.response.status_code,
+        )
+        if provider == "Brevo":
+            detail = (
+                "Brevo rechazó el envío. Revisa BREVO_API_KEY y que "
+                "BREVO_SENDER_EMAIL coincida con un remitente verificado."
+            )
+        else:
+            detail = (
+                "Resend rechazó el envío. Revisa RESEND_API_KEY, "
+                "RESEND_FROM y el dominio verificado."
+            )
         raise HTTPException(
             status_code=503,
-            detail="Resend rechazó el envío. Revisa RESEND_API_KEY, RESEND_FROM y el dominio verificado.",
+            detail=detail,
         )
     except Exception:
         supabase.table("password_reset_tokens")\
