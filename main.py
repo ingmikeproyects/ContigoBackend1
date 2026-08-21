@@ -43,7 +43,12 @@ def ping():
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "message": "El servidor responde correctamente"}
+    revision = os.getenv("RAILWAY_GIT_COMMIT_SHA", "local")[:8]
+    return {
+        "status": "ok",
+        "message": "El servidor responde correctamente",
+        "revision": revision,
+    }
 
 
 if __name__ == "__main__":
