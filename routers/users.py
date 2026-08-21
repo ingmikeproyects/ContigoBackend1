@@ -2,6 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from supabase import Client
 from database import get_supabase
 from middleware.auth_middleware import get_current_user
+from schemas.user import DeleteAccountRequest
+from utils.password_handler import verify_password
+from datetime import datetime
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -161,6 +164,75 @@ def get_user_by_uid(
             )
 
     raise HTTPException(status_code=403, detail="Not authorized to view this user")
+
+
+@router.post("/me/deactivate")
+def deactivate_my_account(
+    current_user: dict = Depends(get_current_user),
+    supabase: Client = Depends(get_supabase),
+):
+    """Baja temporal: conserva los datos y suspende el acceso de vinculaciones."""
+    linkage_column = (
+        "paciente_id" if current_user["rol"] == "paciente" else "especialista_id"
+    )
+    try:
+        supabase.table("vinculaciones")\
+            .update({"activa": False, "suspendida_por_cuenta": True})\
+            .eq(linkage_column, current_user["id"])\
+            .eq("activa", True)\
+            .eq("estado", "aceptada")\
+            .execute()
+
+        response = supabase.table("users").update({
+            "activo": False,
+            "deactivated_at": datetime.utcnow().isoformat(),
+        }).eq("id", current_user["id"]).execute()
+    except Exception:
+        # El error más frecuente aquí es no haber ejecutado la migración que
+        # agrega las columnas de baja temporal. No se desactiva parcialmente.
+        raise HTTPException(
+            status_code=503,
+            detail="La base de datos aún no tiene instalada la migración de gestión de cuenta.",
+        )
+
+    if not response.data:
+        raise HTTPException(status_code=500, detail="No fue posible desactivar la cuenta")
+
+    return {
+        "message": (
+            "Cuenta desactivada temporalmente. Conservamos tus datos y podrás "
+            "reactivarla verificando tu correo."
+        )
+    }
+
+
+@router.post("/me/delete-permanently")
+def delete_my_account_permanently(
+    request: DeleteAccountRequest,
+    current_user: dict = Depends(get_current_user),
+    supabase: Client = Depends(get_supabase),
+):
+    """Eliminación irreversible del usuario autenticado y sus datos en cascada."""
+    if not verify_password(request.password, current_user.get("password_hash", "")):
+        raise HTTPException(status_code=401, detail="La contraseña es incorrecta")
+
+    try:
+        response = (
+            supabase.table("users")
+            .delete()
+            .eq("id", current_user["id"])
+            .execute()
+        )
+    except Exception:
+        raise HTTPException(
+            status_code=500,
+            detail="No fue posible eliminar todos los datos de la cuenta",
+        )
+
+    if not response.data:
+        raise HTTPException(status_code=500, detail="No fue posible eliminar la cuenta")
+
+    return {"message": "Cuenta y datos asociados eliminados definitivamente"}
 
 @router.delete("/{userId}")
 def delete_user(

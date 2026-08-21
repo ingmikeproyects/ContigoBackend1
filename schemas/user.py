@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr, Field
-from typing import Optional
+from typing import Literal, Optional
 from datetime import date, datetime
 from models.user import UserRole
 
@@ -65,6 +65,17 @@ class ResetPasswordRequest(BaseModel):
 
 class ForgotPasswordRequest(BaseModel):
     correo: EmailStr
+
+class AccountReactivationRequest(BaseModel):
+    correo: EmailStr
+
+class AccountReactivationConfirmRequest(BaseModel):
+    correo: EmailStr
+    token: str = Field(min_length=6, max_length=6, pattern=r"^\d{6}$")
+
+class DeleteAccountRequest(BaseModel):
+    password: str = Field(min_length=1, max_length=128)
+    confirmation: Literal["ELIMINAR"]
 
 class RefreshTokenRequest(BaseModel):
     refresh_token: str

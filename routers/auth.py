@@ -1,7 +1,17 @@
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from supabase import Client
 from database import get_supabase
-from schemas.user import UserCreate, Token, UserResponse, LoginRequest, ResetPasswordRequest, ForgotPasswordRequest, RefreshTokenRequest
+from schemas.user import (
+    AccountReactivationConfirmRequest,
+    AccountReactivationRequest,
+    ForgotPasswordRequest,
+    LoginRequest,
+    RefreshTokenRequest,
+    ResetPasswordRequest,
+    Token,
+    UserCreate,
+    UserResponse,
+)
 from utils.password_handler import get_password_hash, verify_password
 from utils.jwt_handler import create_access_token, create_refresh_token, decode_token
 import uuid
@@ -20,15 +30,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-def send_reset_email(email: str, name: str, token: str):
+def _send_transactional_email(email: str, name: str, subject: str, body: str):
     try:
-        body = (
-            f"Hola {name},\n\n"
-            f"Tu código de verificación para Contigo es: {token}\n\n"
-            f"Este código es válido por 1 hora.\n"
-            f"Si no solicitaste este código, puedes ignorar este mensaje con seguridad."
-        )
-
         # Railway bloquea SMTP saliente en algunos planes. Brevo y Resend usan
         # HTTPS, por lo que son las opciones preferidas en producción.
         brevo_api_key = os.getenv("BREVO_API_KEY", "").strip()
@@ -53,7 +56,7 @@ def send_reset_email(email: str, name: str, token: str):
                         "email": brevo_sender_email,
                     },
                     "to": [{"email": email, "name": name or email}],
-                    "subject": "Código de verificación - Contigo",
+                    "subject": subject,
                     "textContent": body,
                 },
                 timeout=15.0,
@@ -77,7 +80,7 @@ def send_reset_email(email: str, name: str, token: str):
                 json={
                     "from": resend_from,
                     "to": [email],
-                    "subject": "Código de verificación - Contigo",
+                    "subject": subject,
                     "text": body,
                 },
                 timeout=15.0,
@@ -108,7 +111,7 @@ def send_reset_email(email: str, name: str, token: str):
         msg.set_content(body, charset="utf-8")
         msg['From'] = f"Contigo App <{smtp_user}>"
         msg['To'] = email
-        msg["Subject"] = "Código de Verificación - Contigo"
+        msg["Subject"] = subject
 
         logger.info(f"Connecting to SMTP server {smtp_host}:{smtp_port}...")
         with smtplib.SMTP(smtp_host, smtp_port, timeout=20) as server:
@@ -129,6 +132,36 @@ def send_reset_email(email: str, name: str, token: str):
     except Exception as e:
         logger.error(f"EMAIL FAILURE to {email}: {type(e).__name__} - {str(e)}", exc_info=True)
         raise
+
+
+def send_reset_email(email: str, name: str, token: str):
+    body = (
+        f"Hola {name},\n\n"
+        f"Tu código de verificación para Contigo es: {token}\n\n"
+        f"Este código es válido por 1 hora.\n"
+        f"Si no solicitaste este código, puedes ignorar este mensaje con seguridad."
+    )
+    _send_transactional_email(
+        email=email,
+        name=name,
+        subject="Código de verificación - Contigo",
+        body=body,
+    )
+
+
+def send_reactivation_email(email: str, name: str, token: str):
+    body = (
+        f"Hola {name},\n\n"
+        f"Tu código para reactivar tu cuenta de Contigo es: {token}\n\n"
+        f"Este código es válido por 1 hora.\n"
+        f"Si no solicitaste la reactivación, ignora este mensaje. Tu cuenta seguirá desactivada."
+    )
+    _send_transactional_email(
+        email=email,
+        name=name,
+        subject="Reactiva tu cuenta - Contigo",
+        body=body,
+    )
 
 @router.post("/register", response_model=Token)
 def register(
@@ -272,7 +305,10 @@ def login(user_data: LoginRequest, supabase: Client = Depends(get_supabase)):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciales incorrectas")
 
         if not user.get("activo", True):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cuenta desactivada. Contacta al administrador.")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="ACCOUNT_INACTIVE: Cuenta desactivada temporalmente. Reactívala con el código enviado a tu correo.",
+            )
 
         access_token = create_access_token(data={"user_id": user["id"], "uid": user["uid"], "rol": user["rol"]})
         refresh_token = create_refresh_token(data={"user_id": user["id"]})
@@ -301,6 +337,11 @@ def refresh(request: RefreshTokenRequest, supabase: Client = Depends(get_supabas
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
     
     user = response.data[0]
+    if not user.get("activo", True):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="La cuenta está desactivada temporalmente",
+        )
     new_access_token = create_access_token(data={"user_id": user["id"], "uid": user["uid"], "rol": user["rol"]})
     return {"access_token": new_access_token, "token_type": "bearer"}
 
@@ -411,6 +452,147 @@ def forgot_password(
         )
 
     return {"message": "Si el correo existe recibirás instrucciones"}
+
+
+@router.post("/request-reactivation")
+def request_account_reactivation(
+    request: AccountReactivationRequest,
+    supabase: Client = Depends(get_supabase),
+):
+    email = request.correo.strip().lower()
+    response = (
+        supabase.table("users")
+        .select("id,nombre,correo,activo")
+        .ilike("correo", email)
+        .limit(1)
+        .execute()
+    )
+    generic_message = "Si la cuenta está desactivada recibirás un código de reactivación"
+    if not response.data or response.data[0].get("activo", True):
+        return {"message": generic_message}
+
+    user = response.data[0]
+    # Evita invalidar el código que acaba de enviarse si el usuario pulsa dos
+    # veces o vuelve a iniciar sesión de inmediato.
+    recent = supabase.table("account_reactivation_tokens")\
+        .select("id")\
+        .eq("user_id", user["id"])\
+        .eq("used", False)\
+        .gte("created_at", (datetime.utcnow() - timedelta(seconds=60)).isoformat())\
+        .limit(1)\
+        .execute()
+    if recent.data:
+        return {"message": generic_message}
+
+    supabase.table("account_reactivation_tokens")\
+        .update({"used": True})\
+        .eq("user_id", user["id"])\
+        .eq("used", False)\
+        .execute()
+
+    token = None
+    for _ in range(10):
+        candidate = ''.join(random.choices(string.digits, k=6))
+        duplicate = supabase.table("account_reactivation_tokens")\
+            .select("id")\
+            .eq("token", candidate)\
+            .eq("used", False)\
+            .limit(1)\
+            .execute()
+        if not duplicate.data:
+            token = candidate
+            break
+    if token is None:
+        raise HTTPException(status_code=503, detail="No fue posible generar el código. Intenta nuevamente.")
+
+    token_response = supabase.table("account_reactivation_tokens").insert({
+        "user_id": user["id"],
+        "token": token,
+        "expires_at": (datetime.utcnow() + timedelta(hours=1)).isoformat(),
+        "used": False,
+    }).execute()
+    if not token_response.data:
+        raise HTTPException(status_code=503, detail="No fue posible preparar la reactivación")
+
+    try:
+        send_reactivation_email(user["correo"], user["nombre"], token)
+    except Exception:
+        supabase.table("account_reactivation_tokens")\
+            .update({"used": True})\
+            .eq("id", token_response.data[0]["id"])\
+            .execute()
+        logger.exception("Could not send account reactivation email for user_id=%s", user["id"])
+        raise HTTPException(
+            status_code=503,
+            detail="No fue posible enviar el código de reactivación. Revisa la configuración de Brevo.",
+        )
+
+    return {"message": generic_message}
+
+
+@router.post("/reactivate")
+def reactivate_account(
+    request: AccountReactivationConfirmRequest,
+    supabase: Client = Depends(get_supabase),
+):
+    email = request.correo.strip().lower()
+    user_response = (
+        supabase.table("users")
+        .select("id,rol,activo")
+        .ilike("correo", email)
+        .limit(1)
+        .execute()
+    )
+    if not user_response.data:
+        raise HTTPException(status_code=400, detail="Código inválido o expirado")
+
+    user = user_response.data[0]
+    if user.get("activo", True):
+        return {"message": "La cuenta ya está activa. Puedes iniciar sesión."}
+
+    now = datetime.utcnow().isoformat()
+    token_response = (
+        supabase.table("account_reactivation_tokens")
+        .select("id")
+        .eq("user_id", user["id"])
+        .eq("token", request.token)
+        .eq("used", False)
+        .gt("expires_at", now)
+        .order("created_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    if not token_response.data:
+        raise HTTPException(status_code=400, detail="Código inválido o expirado")
+
+    updated = (
+        supabase.table("users")
+        .update({
+            "activo": True,
+            "deactivated_at": None,
+            "reactivated_at": now,
+        })
+        .eq("id", user["id"])
+        .execute()
+    )
+    if not updated.data:
+        raise HTTPException(status_code=500, detail="No fue posible reactivar la cuenta")
+
+    linkage_column = "paciente_id" if user["rol"] == "paciente" else "especialista_id"
+    supabase.table("vinculaciones")\
+        .update({"activa": True, "suspendida_por_cuenta": False})\
+        .eq(linkage_column, user["id"])\
+        .eq("suspendida_por_cuenta", True)\
+        .eq("estado", "aceptada")\
+        .execute()
+
+    supabase.table("account_reactivation_tokens")\
+        .update({"used": True})\
+        .eq("user_id", user["id"])\
+        .eq("used", False)\
+        .execute()
+
+    return {"message": "Cuenta reactivada correctamente. Ya puedes iniciar sesión."}
 
 @router.post("/reset-password")
 def reset_password(request: ResetPasswordRequest, supabase: Client = Depends(get_supabase)):

@@ -40,6 +40,8 @@ CREATE TABLE users (
     historial_medico TEXT,
     -- Estado de cuenta
     activo BOOLEAN DEFAULT TRUE,
+    deactivated_at TIMESTAMP WITH TIME ZONE,
+    reactivated_at TIMESTAMP WITH TIME ZONE,
     fecha_registro TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     ultimo_acceso TIMESTAMP WITH TIME ZONE
 );
@@ -52,6 +54,7 @@ CREATE TABLE vinculaciones (
     fecha_vinculacion TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     activa BOOLEAN DEFAULT TRUE,
     consentimiento_dado BOOLEAN DEFAULT FALSE,
+    suspendida_por_cuenta BOOLEAN NOT NULL DEFAULT FALSE,
     codigo VARCHAR(6) UNIQUE,
     estado VARCHAR(20) DEFAULT 'aceptada' CHECK (estado IN (
         'pendiente', 'aceptada', 'expirada', 'finalizada'
@@ -157,6 +160,16 @@ CREATE TABLE password_reset_tokens (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+-- Códigos para reactivar cuentas dadas de baja temporalmente
+CREATE TABLE account_reactivation_tokens (
+    id BIGSERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token VARCHAR(6) NOT NULL CHECK (token ~ '^[0-9]{6}$'),
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    used BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
 -- Tabla de resultados GAD-7
 CREATE TABLE gad7_results (
     id SERIAL PRIMARY KEY,
@@ -185,6 +198,7 @@ ALTER TABLE specialist_tasks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE calibration_data ENABLE ROW LEVEL SECURITY;
 ALTER TABLE gad7_results ENABLE ROW LEVEL SECURITY;
 ALTER TABLE password_reset_tokens ENABLE ROW LEVEL SECURITY;
+ALTER TABLE account_reactivation_tokens ENABLE ROW LEVEL SECURITY;
 
 CREATE TABLE IF NOT EXISTS subscriptions (
     id SERIAL PRIMARY KEY,

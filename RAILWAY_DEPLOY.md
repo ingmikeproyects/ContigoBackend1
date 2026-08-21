@@ -59,7 +59,13 @@ Después de cambiar variables hay que desplegar los cambios pendientes. Verifica
 2. `/openapi.json` contiene `/vinculaciones/invitation`,
    `/calibration/extended` y `/auth/forgot-password`.
 3. Ejecutar `migration_feedback5_20260820.sql` en Supabase antes de probar.
+   Después ejecutar `migration_account_management_20260821.sql` para habilitar
+   baja temporal, reactivación por correo y eliminación definitiva.
 4. Solicitar un código con una cuenta real y revisar los logs del deployment
    para `SUCCESS: Reset email sent through Brevo` o el error clasificado.
 5. Solicitar recuperación de contraseña y comprobar que el correo llega; el
    código vence en una hora y solo puede usarse una vez.
+6. Desactivar una cuenta de prueba, iniciar sesión de nuevo, introducir el
+   código recibido y confirmar que conserva su perfil y su vinculación.
+7. Para probar la eliminación definitiva usa una cuenta desechable: requiere
+   la contraseña actual y elimina en cascada los datos asociados.

@@ -28,6 +28,6 @@ def get_current_user(token: str = Depends(oauth2_scheme), supabase: Client = Dep
 
     user = response.data[0]
     if not user.get("activo", True):
-        raise HTTPException(status_code=400, detail="Inactive user")
+        raise HTTPException(status_code=403, detail="Cuenta desactivada temporalmente")
 
     return user
