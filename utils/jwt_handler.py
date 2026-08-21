@@ -6,18 +6,18 @@ from dotenv import load_dotenv
 from pathlib import Path
 
 
-# Forzar la carga del archivo .env buscando en el directorio raíz del backend
+# En desarrollo solo se lee el .env propio del backend. En Railway las
+# variables del servicio tienen prioridad y el archivo no se despliega.
 backend_dir = Path(__file__).resolve().parent.parent
 dotenv_path = backend_dir / ".env"
-for candidate in (dotenv_path, backend_dir.parent / ".env"):
-    if candidate.exists():
-        load_dotenv(dotenv_path=candidate, override=False)
+if dotenv_path.exists():
+    load_dotenv(dotenv_path=dotenv_path, override=False, encoding="utf-8-sig")
 
 SECRET_KEY = os.getenv("SECRET_KEY")
 
 if not SECRET_KEY:
     # Fallback por si la carga falla, pero avisando
-    print(f"⚠️  ERROR: No se pudo cargar SECRET_KEY desde {dotenv_path}")
+    print(f"ERROR: No se pudo cargar SECRET_KEY desde {dotenv_path}")
     SECRET_KEY = "clave-secreta-temporal-de-emergencia"
 
 ALGORITHM = "HS256"

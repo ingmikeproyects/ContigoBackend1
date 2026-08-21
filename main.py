@@ -1,3 +1,5 @@
+import os
+
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from routers import auth, users, biometrics, emotional_states, activities, alerts, vinculaciones, notas, calibration, payments, risk, gad7, tasks
@@ -42,3 +44,15 @@ def ping():
 @app.get("/health")
 def health():
     return {"status": "ok", "message": "El servidor responde correctamente"}
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    # Railway inyecta PORT en tiempo de ejecución. Leerlo desde Python evita
+    # depender de que el shell del contenedor expanda correctamente `$PORT`.
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=int(os.getenv("PORT", "8000")),
+    )
