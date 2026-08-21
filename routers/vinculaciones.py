@@ -95,10 +95,11 @@ def create_invitation(
     if current_user["rol"] != "especialista":
         raise HTTPException(status_code=403, detail="Solo especialistas")
 
+    normalized_email = data.email.strip().lower()
     patient_result = (
         supabase.table("users")
         .select("id,uid,nombre,correo,rol")
-        .ilike("correo", data.email.strip())
+        .ilike("correo", normalized_email)
         .limit(1)
         .execute()
     )
@@ -114,14 +115,20 @@ def create_invitation(
 
     active = (
         supabase.table("vinculaciones")
-        .select("id")
+        .select("id,especialista_id")
         .eq("paciente_id", patient["id"])
         .eq("activa", True)
         .execute()
     )
     if active.data:
+        same_specialist = active.data[0].get("especialista_id") == current_user["id"]
         raise HTTPException(
-            status_code=409, detail="El paciente ya tiene un especialista activo"
+            status_code=409,
+            detail=(
+                "El paciente ya está vinculado contigo"
+                if same_specialist
+                else "El paciente ya tiene otro especialista activo"
+            ),
         )
 
     # Reemplaza una invitación anterior del mismo par para que solo exista un
@@ -151,7 +158,9 @@ def create_invitation(
         "especialista_id": current_user["id"],
         "paciente_id": patient["id"],
         "activa": False,
-        "consentimiento_dado": True,
+        # El consentimiento solamente se vuelve verdadero cuando el paciente
+        # introduce el código y acepta la vinculación.
+        "consentimiento_dado": False,
         "codigo": code,
         "estado": "pendiente",
         "expires_at": (now + timedelta(hours=24)).isoformat(),

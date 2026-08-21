@@ -13,6 +13,7 @@ import string
 import logging
 import re
 import httpx
+import ssl
 from email.message import EmailMessage
 
 logger = logging.getLogger(__name__)
@@ -59,6 +60,16 @@ def send_reset_email(email: str, name: str, token: str):
         if not smtp_user or not smtp_password:
             raise RuntimeError("SMTP no está configurado (SMTP_USER/SMTP_PASSWORD)")
 
+        # Google muestra la contraseña de aplicación en grupos separados por
+        # espacios. Railway conserva esos espacios y Gmail los rechaza, por
+        # eso se normaliza únicamente esta credencial antes de autenticar.
+        smtp_password = "".join(smtp_password.split())
+        if len(smtp_password) != 16:
+            logger.warning(
+                "SMTP_PASSWORD no tiene 16 caracteres después de normalizarla; "
+                "verifica que sea una contraseña de aplicación de Google."
+            )
+
         msg = EmailMessage()
         msg.set_content(body, charset="utf-8")
         msg['From'] = f"Contigo App <{smtp_user}>"
@@ -66,17 +77,16 @@ def send_reset_email(email: str, name: str, token: str):
         msg["Subject"] = "Código de Verificación - Contigo"
 
         logger.info(f"Connecting to SMTP server {smtp_host}:{smtp_port}...")
-        server = smtplib.SMTP(smtp_host, smtp_port, timeout=15)
-        server.ehlo()  # Identificarse ante el servidor
-        server.starttls()
-        server.ehlo()  # Re-identificarse tras cifrar
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=20) as server:
+            server.ehlo()
+            server.starttls(context=ssl.create_default_context())
+            server.ehlo()
 
-        logger.info(f"Logging in as {smtp_user}...")
-        server.login(smtp_user, smtp_password)
+            logger.info(f"Logging in as {smtp_user}...")
+            server.login(smtp_user, smtp_password)
 
-        logger.info(f"Sending message to {email}...")
-        server.send_message(msg)
-        server.quit()
+            logger.info(f"Sending message to {email}...")
+            server.send_message(msg)
         logger.info(f"SUCCESS: Email sent successfully to {email}")
     except smtplib.SMTPAuthenticationError:
         logger.error(f"AUTH ERROR: Google rejected credentials for {smtp_user}. "
@@ -313,6 +323,33 @@ def forgot_password(
     # proveedor rechazó el correo por configuración, autenticación o red.
     try:
         send_reset_email(email, user['nombre'], token)
+    except smtplib.SMTPAuthenticationError:
+        supabase.table("password_reset_tokens")\
+            .update({"used": True})\
+            .eq("id", token_response.data[0]["id"])\
+            .execute()
+        raise HTTPException(
+            status_code=503,
+            detail="Gmail rechazó la autenticación. Revisa verificación en dos pasos, correo y contraseña de aplicación.",
+        )
+    except (smtplib.SMTPConnectError, TimeoutError, OSError):
+        supabase.table("password_reset_tokens")\
+            .update({"used": True})\
+            .eq("id", token_response.data[0]["id"])\
+            .execute()
+        raise HTTPException(
+            status_code=503,
+            detail="Railway no pudo conectarse al servidor de correo. Revisa los logs o usa Resend por HTTPS.",
+        )
+    except httpx.HTTPStatusError:
+        supabase.table("password_reset_tokens")\
+            .update({"used": True})\
+            .eq("id", token_response.data[0]["id"])\
+            .execute()
+        raise HTTPException(
+            status_code=503,
+            detail="Resend rechazó el envío. Revisa RESEND_API_KEY, RESEND_FROM y el dominio verificado.",
+        )
     except Exception:
         supabase.table("password_reset_tokens")\
             .update({"used": True})\

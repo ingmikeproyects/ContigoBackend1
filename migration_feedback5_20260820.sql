@@ -12,6 +12,26 @@ UPDATE public.users
 SET subscription_plan = 'basico'
 WHERE subscription_plan IS NULL;
 
+-- Columnas indispensables para generar y aceptar códigos de vinculación.
+-- Se repiten aquí para que este único script final sea suficiente aunque no
+-- se haya ejecutado migration_feedback3_20260812.sql.
+ALTER TABLE public.vinculaciones
+  ADD COLUMN IF NOT EXISTS codigo VARCHAR(6),
+  ADD COLUMN IF NOT EXISTS estado VARCHAR(20) DEFAULT 'aceptada',
+  ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP WITH TIME ZONE;
+
+CREATE UNIQUE INDEX IF NOT EXISTS vinculaciones_codigo_unique
+  ON public.vinculaciones(codigo)
+  WHERE codigo IS NOT NULL;
+
+ALTER TABLE public.vinculaciones DROP CONSTRAINT IF EXISTS vinculaciones_estado_check;
+ALTER TABLE public.vinculaciones ADD CONSTRAINT vinculaciones_estado_check
+  CHECK (estado IN ('pendiente', 'aceptada', 'expirada', 'finalizada'));
+
+UPDATE public.vinculaciones
+SET estado = CASE WHEN activa THEN 'aceptada' ELSE 'finalizada' END
+WHERE estado IS NULL;
+
 ALTER TABLE public.specialist_tasks
   ADD COLUMN IF NOT EXISTS instrucciones_html TEXT,
   ADD COLUMN IF NOT EXISTS enlace_recurso TEXT,
